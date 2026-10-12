@@ -2,12 +2,11 @@
 
 > You are the stock chart. Your job is to ruin everyone who trusts you.
 
-An absurd, web-based strategy game made solo in 1 month for [Jam name]. Theme: **absurdity**.
+An absurd, web-based strategy game made by Faruk and Berkegiray in 1 month for BST Academy. Theme: **absurdity**.
 
 ![Gameplay](screenshots/gameplay.gif)
-<!-- Create a screenshots/ folder and put your GIF or main screenshot there as gameplay.gif / gameplay.png -->
 
-**[▶ Play on itch.io]([itch.io link])**
+**[▶ Play on itch.io](https://victimscream.itch.io/liquidation)**
 
 ---
 
@@ -53,17 +52,11 @@ You're a stock chart trying to ruin the traders who watch you, but to do it you 
 Download the files, open a terminal in the folder and start a local server (browsers may refuse to load some files when `index.html` is opened directly):
 
 ```
-python -m http.server 8000
+npm install
+npm run dev
 ```
 
 Then open `http://localhost:8000` in your browser.
-
-<!--
-If you use npm instead, replace the above with:
-
-npm install
-npm run dev
--->
 
 ## Built with
 
@@ -76,4 +69,4 @@ npm run dev
 
 ## License
 
-[Pick a license, e.g. MIT. If you don't pick one, all rights are reserved by default]
+GPL-3.0. See [LICENSE](LICENSE).
