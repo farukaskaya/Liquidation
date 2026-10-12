@@ -18,51 +18,51 @@ function createRNG(seed) {
 
 // ─── GLOBAL SABİTLER ──────────────────────────────────────────────────────────
 
-const LERP_SPEED      = 0.22;
+const LERP_SPEED      = 0.08;   // lower = smoother line when mouse moves fast
 const SAMPLE_INTERVAL = 20;
 const HISTORY_LEN     = 180;
 const CHART_PAD       = 22;
 const CHART_RADIUS    = 14;
 const MAX_NPC_SLOTS   = 8;
 
-// ─── LEVEL TANIMLARI (İlk 4 Öğretici Bölüm) ───────────────────────────────────
+// ─── LEVEL DEFINITIONS ────────────────────────────────────────────────────────
 
 const LEVEL_CONFIGS = [
   {
     id         : 1,
-    label      : 'LEVEL 1 — Armut CO. Stoğu',
+    label      : 'LEVEL 1 — Banana Genomics Inc.',
     targetLoss : 4,
     npcCount   : 5,
     archetypes : ['retail', 'retail', 'retail', 'retail', 'retail'],
-    hint       : 'Yükselt, perakendeciler alsın; sonra anında çökert!',
+    hint       : 'Pump it up, let retailers buy — then crash it immediately!',
   },
   {
     id         : 2,
-    label      : 'LEVEL 2 — Wuehai Stoğu',
+    label      : 'LEVEL 2 — Sock Coin',
     targetLoss : 5,
     npcCount   : 6,
     archetypes : ['retail', 'retail', 'hodler', 'hodler', 'retail', 'retail'],
-    hint       : "HODL'cular çok bekler — sabırla yükselt, sonra çok sert düşür",
+    hint       : "HODLers wait forever — pump long, then dump HARD.",
   },
   {
     id         : 3,
-    label      : 'LEVEL 3 — Planet Y Stoğu',
-    targetLoss : 5,
+    label      : 'LEVEL 3 — Going To The Moon Token',
+    targetLoss : 6,
     npcCount   : 7,
     archetypes : ['retail', 'hodler', 'contrarian', 'contrarian', 'retail', 'hodler', 'retail'],
-    hint       : 'Kontraryenler düşüşte alır — onları önce düşüşle kandır, sonra batır',
+    hint       : 'Contrarians buy the dip — trick them first, then collapse.',
   },
   {
     id         : 4,
-    label      : 'LEVEL 4 — Yıldırım Fonu Ltd.',
+    label      : 'LEVEL 4 — Panic Button Holding',
     targetLoss : 5,
     npcCount   : 7,
     archetypes : ['scalper', 'hodler', 'contrarian', 'contrarian', 'scalper', 'hodler', 'scalper'],
-    hint       : 'Scalperlar anında kaçar — fırsat vermeden hızlıca aşağı vur',
+    hint       : 'Scalpers exit instantly — trap them before they can run.',
   },
 ];
 
-// ─── ARKETİPLER ───────────────────────────────────────────────────────────────
+// ─── ARCHETYPES ───────────────────────────────────────────────────────────────
 
 const ARCHETYPES = {
   retail: {
@@ -164,7 +164,7 @@ function createNPC(id, archetype, rng) {
 }
 
 function tickNPC(npc, priceState) {
-  if (npc.state === 'sold_loss' || npc.state === 'sold_gain') return null;
+  if (npc.state === 'sold_loss' || npc.state === 'sold_gain' || npc.state === 'fled') return null;
 
   const price    = priceState.current;
   const velocity = getPriceVelocity(priceState.history);
@@ -172,6 +172,12 @@ function tickNPC(npc, priceState) {
 
   if (!isMoving) {
     npc.interest = Math.max(0, npc.interest - npc.interestDec);
+  }
+
+  // Interest exhausted → NPC flees the market
+  if (npc.state === 'watching' && npc.interest <= 0) {
+    npc.state = 'fled';
+    return null;
   }
 
   if (npc.state === 'watching') {
@@ -268,30 +274,33 @@ function formatCurrency(n) {
   return '$' + n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-// ─── UI SABİTLERİ ─────────────────────────────────────────────────────────────
+// ─── UI CONSTANTS ─────────────────────────────────────────────────────────────
 
 const STATE_COLOR = {
   watching  : '#888899',
   bought    : '#ffaa00',
   sold_loss : '#ff4466',
   sold_gain : '#44aaff',
+  fled      : '#555566',   // dim grey — they left
 };
 
 const STATE_LABEL = {
-  watching  : '(0 -0 ) İzliyor',
-  bought    : '$ ALDI',
-  sold_loss : '(T - T) Zararda',
-  sold_gain : '(0 U 0) Kârda kaçtı',
+  watching  : '(0 -0 ) Watching',
+  bought    : '[$] BOUGHT',
+  sold_loss : '(T - T) Liquidated',
+  sold_gain : '(0 U 0) Profit exit',
+  fled      : '(> . >) FLED',
 };
 
 const ARCHETYPE_LABEL = {
-  retail     : 'Perakende',
+  retail     : 'Retail',
   hodler     : 'HODLer',
-  contrarian : 'Kontraryen',
+  contrarian : 'Contrarian',
   scalper    : 'Scalper',
 };
 
 const GAME_STATE = {
+  MENU     : 'menu',
   PLAYING  : 'playing',
   PAUSED   : 'paused',
 };
@@ -307,7 +316,6 @@ class GameScene extends Phaser.Scene {
   }
 
   create() {
-    // Metin dosyasından stok listesini al
     const raw = this.cache.text.get('stockNames') || '';
     this.stockNames = raw
       .split('\n')
@@ -315,25 +323,29 @@ class GameScene extends Phaser.Scene {
       .filter(Boolean);
 
     if (this.stockNames.length === 0) {
-      this.stockNames = ['Uzay Muzları A.Ş.', 'Çorap Coin', 'FOMO Holding'];
+      this.stockNames = ['Banana Genomics Inc.', 'Sock Coin', 'FOMO Holdings'];
     }
 
-    // Oyun çekirdek durumu
-    this.baseSeed   = 4242;
-    this.levelIndex = 0;
-    this.currency   = 0;
-    this.gameState  = GAME_STATE.PLAYING;
+    this.baseSeed    = 4242;
+    this.levelIndex  = 0;
+    this.currency    = 0;
+    this.gameState   = GAME_STATE.PLAYING;
     this.pendingNext = null;
-    this.mouseY     = this.scale.height / 2;
+    this.mouseY      = this.scale.height / 2;
+    this.mouseX      = this.scale.width / 2;
 
-    this.input.on('pointermove', p => { this.mouseY = p.y; });
+    this.input.on('pointermove', p => { this.mouseX = p.x; this.mouseY = p.y; });
     this.scale.on('resize', () => { this.recomputeLayout(); });
 
-    // Grafik katmanları
-    this.bgGfx = this.add.graphics();
-    this.fgGfx = this.add.graphics();
+    // P key → pause/resume
+    this.pauseKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
 
-    // Üst Panel: Beyaz arka plan üstünde koyu metinler
+    // Graphics layers
+    this.bgGfx     = this.add.graphics();
+    this.fgGfx     = this.add.graphics();
+    this.cursorGfx = this.add.graphics().setDepth(30); // cursor arrow on top of everything
+
+    // Header labels
     this.levelLabel = this.add.text(0, 0, '', {
       fontFamily: 'monospace', fontSize: '17px', fontStyle: 'bold', color: '#111118',
     }).setDepth(10);
@@ -350,13 +362,13 @@ class GameScene extends Phaser.Scene {
       fontFamily: 'monospace', fontSize: '20px', fontStyle: 'bold', color: '#0a8844', align: 'right',
     }).setOrigin(1, 0).setDepth(10);
 
-    // Fiyat etiketi: Grafiğin sağ kenarında, çizgiye bağlı yeşil kutu
+    // Price badge
     this.priceLabel = this.add.text(0, 0, '', {
       fontFamily: 'monospace', fontSize: '12px', fontStyle: 'bold', color: '#000000',
       backgroundColor: '#00ff88', padding: { x: 5, y: 3 },
     }).setDepth(15);
 
-    // NPC Kartları (Grafiğin altında yatay sıralı)
+    // NPC cards
     this.npcTexts = Array.from({ length: MAX_NPC_SLOTS }, () =>
       this.add.text(0, 0, '', {
         fontFamily : 'monospace',
@@ -366,7 +378,7 @@ class GameScene extends Phaser.Scene {
       }).setDepth(12).setVisible(false)
     );
 
-    // Overlay (Tam ekran karartma & Durum Ekranı)
+    // ── Level-complete / fail overlay ──────────────────────────────────────
     const W = this.scale.width;
     const H = this.scale.height;
     this.overlayBg = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0).setDepth(20);
@@ -392,6 +404,38 @@ class GameScene extends Phaser.Scene {
       .on('pointerover', () => this.actionBtn.setStyle({ backgroundColor: '#00cc66' }))
       .on('pointerout',  () => this.actionBtn.setStyle({ backgroundColor: '#00ff88' }))
       .on('pointerdown', () => this.onActionBtn());
+
+    // ── Pause overlay (P key) ───────────────────────────────────────────────
+    this.pauseOverlayBg = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0).setDepth(40);
+
+    this.add.text(W / 2, H / 2 - 60, '⏸  PAUSED', {
+      fontFamily: 'monospace', fontSize: '28px', fontStyle: 'bold', color: '#ffffff',
+    }).setOrigin(0.5).setDepth(42).setName('pauseTitle');
+
+    // Continue button
+    this.pauseContinueBtn = this.add.text(W / 2, H / 2 + 10, '[ Continue ]', {
+      fontFamily: 'monospace', fontSize: '19px', color: '#000000',
+      backgroundColor: '#00ff88', padding: { x: 24, y: 11 },
+    })
+      .setOrigin(0.5).setDepth(42)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerover', () => this.pauseContinueBtn.setStyle({ backgroundColor: '#00cc66' }))
+      .on('pointerout',  () => this.pauseContinueBtn.setStyle({ backgroundColor: '#00ff88' }))
+      .on('pointerdown', () => this.resumeGame());
+
+    // Main Menu button
+    this.pauseMenuBtn = this.add.text(W / 2, H / 2 + 70, '[ Main Menu ]', {
+      fontFamily: 'monospace', fontSize: '16px', color: '#ffffff',
+      backgroundColor: '#333344', padding: { x: 20, y: 10 },
+    })
+      .setOrigin(0.5).setDepth(42)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerover', () => this.pauseMenuBtn.setStyle({ color: '#00ff88' }))
+      .on('pointerout',  () => this.pauseMenuBtn.setStyle({ color: '#ffffff' }))
+      .on('pointerdown', () => this.scene.start('MenuScene'));
+
+    // Hide pause overlay initially
+    this.setPauseOverlayVisible(false);
 
     this.initLevel();
   }
@@ -443,6 +487,16 @@ class GameScene extends Phaser.Scene {
   // ── Update döngüsü ────────────────────────────────────────────────────────
 
   update() {
+    // P key toggles pause (only while actively playing, not during level overlays)
+    if (Phaser.Input.Keyboard.JustDown(this.pauseKey)) {
+      if (this.gameState === GAME_STATE.PLAYING) {
+        this.gameState = GAME_STATE.PAUSED;
+        this.setPauseOverlayVisible(true);
+      } else if (this.gameState === GAME_STATE.PAUSED) {
+        this.resumeGame();
+      }
+    }
+
     if (this.gameState !== GAME_STATE.PLAYING) return;
 
     const { y: chartY, h: chartH } = this.chart;
@@ -465,6 +519,7 @@ class GameScene extends Phaser.Scene {
 
     this.drawGraph();
     this.updateUI();
+    this.drawCursor();
   }
 
   // ── Çizim: Koyu Gri Panel + Fiyat Çizgisi + Alt NPC Kartları ───────────────
@@ -535,25 +590,25 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  // ── Metinler ve Arayüz Güncellemesi ───────────────────────────────────────
+  // ── UI text update ─────────────────────────────────────────────────────────
 
   updateUI() {
     const { x: cx, y: cy, w: cw, h: ch } = this.chart;
-    const { y: ny, h: nh } = this.npcArea;
+    const { y: ny } = this.npcArea;
 
-    // Fiyat Rozeti
+    // Price badge
     const pct    = Math.round(this.priceState.current * 100);
     const labelY = priceToY(this.priceState.current, cy, ch);
     this.priceLabel
       .setPosition(cx + cw - 52, Math.max(cy + 4, Math.min(cy + ch - 22, labelY - 9)))
       .setText(`${pct}%`);
 
-    // İlerleme ve Bakiye
+    // Progress & earnings
     const { lossCount, config } = this.levelState;
-    this.progressLabel.setText(`Zarara Uğrat: ${lossCount} / ${config.targetLoss}`);
-    this.currencyLabel.setText(`Kazanç: ${formatCurrency(this.currency)}`);
+    this.progressLabel.setText(`Liquidate: ${lossCount} / ${config.targetLoss}`);
+    this.currencyLabel.setText(`Earned: ${formatCurrency(this.currency)}`);
 
-    // NPC Kartlarının İçerikleri
+    // NPC cards
     const count = this.levelState.npcs.length;
     const gap   = 8;
     const cardW = Math.floor((cw - (count - 1) * gap) / count);
@@ -568,23 +623,25 @@ class GameScene extends Phaser.Scene {
 
       const lines = [
         `#${npc.id + 1} ${archName}`,
-        STATE_LABEL[npc.state],
+        STATE_LABEL[npc.state] || npc.state,
         `[${bar}]`,
       ];
 
       if (npc.state === 'bought') {
-        lines.push(`Alış: %${Math.round(npc.buyPrice * 100)}`);
+        lines.push(`Bought @ ${Math.round(npc.buyPrice * 100)}%`);
       } else if (npc.state === 'sold_loss') {
         const earned = Math.round((npc.buyPrice - npc.sellPrice) * 10000);
         lines.push(`+${formatCurrency(earned)} ✓`);
       } else if (npc.state === 'sold_gain') {
-        lines.push('Kaçtı ✗');
+        lines.push('Got out ✗');
+      } else if (npc.state === 'fled') {
+        lines.push('Ran away ✗');
       }
 
       txt
         .setPosition(kx + 6, ny + 6)
         .setText(lines.join('\n'))
-        .setColor(STATE_COLOR[npc.state])
+        .setColor(STATE_COLOR[npc.state] || '#888888')
         .setVisible(true);
     });
 
@@ -593,26 +650,63 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  // ── Seviye Geçiş ve Duraklama Ekranı ───────────────────────────────────────
+  // ── Cursor arrow: green triangle following mouse inside chart ──────────────
+
+  drawCursor() {
+    this.cursorGfx.clear();
+    const { x: cx, y: cy, w: cw, h: ch } = this.chart;
+
+    // Only draw inside chart bounds (with small padding)
+    if (
+      this.mouseX < cx || this.mouseX > cx + cw ||
+      this.mouseY < cy || this.mouseY > cy + ch
+    ) return;
+
+    const mx = this.mouseX;
+    const my = priceToY(this.priceState.current, cy, ch); // snap Y to actual price line
+
+    // Arrow: small triangle pointing right
+    const S = 9; // half-size
+    this.cursorGfx.fillStyle(0x00ff88, 1);
+    this.cursorGfx.fillTriangle(
+      mx + S * 1.8, my,          // tip (right)
+      mx - S,       my - S,      // top-left
+      mx - S,       my + S       // bottom-left
+    );
+    // Dot on tip
+    this.cursorGfx.fillCircle(mx + S * 1.8, my, 3);
+  }
+
+  // ── Level-complete / fail overlay ──────────────────────────────────────────
 
   showPauseScreen(type) {
     this.gameState   = GAME_STATE.PAUSED;
     this.pendingNext = type;
 
     this.overlayBg.setFillStyle(0x000000, 0.72);
-    this.overlayEarnings.setText(`Toplam Kazanç: ${formatCurrency(this.currency)}`).setVisible(true);
+    this.overlayEarnings.setText(`Total Earned: ${formatCurrency(this.currency)}`).setVisible(true);
 
     if (type === 'next_level') {
-      this.overlayLabel.setText(`✅ ${this.levelState.config.label} TAMAMLANDI`).setColor('#00ff88').setVisible(true);
+      this.overlayLabel
+        .setText(`✅ ${this.levelState.config.label} CLEARED`)
+        .setColor('#00ff88').setVisible(true);
       const sub = this.levelIndex >= 3
-        ? 'Sonsuz piyasada sıradaki vurguna hazır mısın?'
-        : 'Sonraki seviyeye hazır mısın?';
+        ? 'Ready for the infinite market?'
+        : 'Ready for the next level?';
       this.subLabel.setText(sub).setVisible(true);
-      this.actionBtn.setText('[ Devam Et ]').setStyle({ backgroundColor: '#00ff88', color: '#000000' }).setVisible(true);
+      this.actionBtn
+        .setText('[ Continue ]')
+        .setStyle({ backgroundColor: '#00ff88', color: '#000000' })
+        .setVisible(true);
     } else {
-      this.overlayLabel.setText('⚠ İLGİ BİTTİ').setColor('#ff4466').setVisible(true);
-      this.subLabel.setText('Piyasa seni unuttu. Tekrar dene.').setVisible(true);
-      this.actionBtn.setText('[ Tekrar Dene ]').setStyle({ backgroundColor: '#ff4466', color: '#ffffff' }).setVisible(true);
+      this.overlayLabel
+        .setText('⚠ INTEREST GONE')
+        .setColor('#ff4466').setVisible(true);
+      this.subLabel.setText('The market forgot you. Try again.').setVisible(true);
+      this.actionBtn
+        .setText('[ Retry ]')
+        .setStyle({ backgroundColor: '#ff4466', color: '#ffffff' })
+        .setVisible(true);
     }
   }
 
@@ -627,15 +721,27 @@ class GameScene extends Phaser.Scene {
   onActionBtn() {
     const type = this.pendingNext;
     this.hideOverlay();
-
-    if (type === 'next_level') {
-      this.levelIndex++;
-    }
-    // Her iki durumda da initLevel çalışır (restart'ta aynı bölüm, next'te bir sonraki)
+    if (type === 'next_level') this.levelIndex++;
     this.initLevel();
-
     this.pendingNext = null;
     this.gameState   = GAME_STATE.PLAYING;
+  }
+
+  // ── Pause overlay helpers ───────────────────────────────────────────────────
+
+  setPauseOverlayVisible(visible) {
+    const alpha = visible ? 0.75 : 0;
+    this.pauseOverlayBg.setFillStyle(0x000000, alpha);
+    // Find pause title text by name
+    const pauseTitle = this.children.getByName('pauseTitle');
+    if (pauseTitle) pauseTitle.setVisible(visible);
+    this.pauseContinueBtn.setVisible(visible);
+    this.pauseMenuBtn.setVisible(visible);
+  }
+
+  resumeGame() {
+    this.setPauseOverlayVisible(false);
+    this.gameState = GAME_STATE.PLAYING;
   }
 
   refreshLevelUI() {
@@ -645,17 +751,87 @@ class GameScene extends Phaser.Scene {
   }
 }
 
-// ─── PHASER KONFİGÜRASYONU ───────────────────────────────────────────────────
+// ─── MENU SCENE ────────────────────────────────────────────────────────────────
+
+class MenuScene extends Phaser.Scene {
+  constructor() { super({ key: 'MenuScene' }); }
+
+  preload() {
+    this.load.text('stockNames', 'stocks.txt');
+  }
+
+  create() {
+    const W = this.scale.width;
+    const H = this.scale.height;
+
+    // Background
+    this.add.rectangle(W / 2, H / 2, W, H, 0x0a0a0f);
+
+    // Decorative fake chart lines
+    const g = this.add.graphics();
+    g.lineStyle(1.5, 0x00ff88, 0.15);
+    const points = [0.5, 0.4, 0.6, 0.35, 0.55, 0.3, 0.65, 0.25, 0.7, 0.15, 0.5, 0.45, 0.6];
+    g.beginPath();
+    for (let i = 0; i < points.length; i++) {
+      const px = (i / (points.length - 1)) * W;
+      const py = H * 0.3 + points[i] * H * 0.5;
+      i === 0 ? g.moveTo(px, py) : g.lineTo(px, py);
+    }
+    g.strokePath();
+
+    // Title
+    this.add.text(W / 2, H / 2 - 100, 'LIQUIDATION', {
+      fontFamily: 'monospace',
+      fontSize  : '52px',
+      fontStyle : 'bold',
+      color     : '#00ff88',
+    }).setOrigin(0.5);
+
+    // Tagline
+    this.add.text(W / 2, H / 2 - 40, 'You are the market. Destroy them all.', {
+      fontFamily: 'monospace',
+      fontSize  : '16px',
+      color     : '#556677',
+    }).setOrigin(0.5);
+
+    // Start button
+    const startBtn = this.add.text(W / 2, H / 2 + 40, '[ START ]', {
+      fontFamily  : 'monospace',
+      fontSize    : '22px',
+      fontStyle   : 'bold',
+      color       : '#000000',
+      backgroundColor: '#00ff88',
+      padding     : { x: 32, y: 14 },
+    })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerover', () => startBtn.setStyle({ backgroundColor: '#00cc66' }))
+      .on('pointerout',  () => startBtn.setStyle({ backgroundColor: '#00ff88' }))
+      .on('pointerdown', () => this.scene.start('GameScene'));
+
+    // Controls hint
+    this.add.text(W / 2, H / 2 + 120, 'Move mouse up/down to control the price  |  P = Pause', {
+      fontFamily: 'monospace',
+      fontSize  : '12px',
+      color     : '#334455',
+    }).setOrigin(0.5);
+  }
+}
+
+// ─── PHASER CONFIG ─────────────────────────────────────────────────────────────
 
 new Phaser.Game({
   type           : Phaser.AUTO,
   width          : window.innerWidth,
   height         : window.innerHeight,
-  backgroundColor: '#ffffff', // Beyaz site arka planı
+  backgroundColor: '#ffffff',
   scale          : {
-    mode: Phaser.Scale.RESIZE,
+    mode      : Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  fps            : { target: 60, limit: 60 },
-  scene          : [GameScene],
+  fps  : { target: 60, limit: 60 },
+  // MenuScene first, GameScene second
+  scene: [MenuScene, GameScene],
 });
+
+
