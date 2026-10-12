@@ -212,7 +212,7 @@ function tickNPC(npc, priceState) {
 function generateInfiniteLevel(levelIndex, stockNames, rng) {
   const stockName = (stockNames && stockNames.length > 0)
     ? stockNames[Math.floor(rng() * stockNames.length)]
-    : 'Bilinmeyen Varlık A.Ş.';
+    : 'Unknown Asset Corp.';
 
   // min 3, max 7 NPC
   const npcCount = 3 + Math.floor(rng() * 5);
@@ -229,7 +229,7 @@ function generateInfiniteLevel(levelIndex, stockNames, rng) {
     targetLoss,
     npcCount,
     archetypes,
-    hint       : 'Absürt piyasa dinamikleri! Arketipler karışık, oyunu oku.',
+    hint       : 'Absurd market dynamics! Mixed archetypes, read the room.',
   };
 }
 
@@ -249,7 +249,7 @@ function createLevelState(config, rng) {
   };
 }
 
-function tickLevel(level, priceState, onEarn) {
+function tickLevel(level, priceState, onEarn, onLiquidate) {
   if (level.complete) return;
   for (const npc of level.npcs) {
     const result = tickNPC(npc, priceState);
@@ -259,6 +259,9 @@ function tickLevel(level, priceState, onEarn) {
       if (onEarn) {
         const earned = Math.round((npc.buyPrice - npc.sellPrice) * 10000);
         onEarn(earned);
+      }
+      if (onLiquidate) {
+        onLiquidate(npc);
       }
     }
   }
@@ -341,8 +344,38 @@ class GameScene extends Phaser.Scene {
     this.pauseKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
 
     // Graphics layers
-    this.bgGfx     = this.add.graphics();
-    this.fgGfx     = this.add.graphics();
+    this.bgGfx      = this.add.graphics();
+    this.fgGfx      = this.add.graphics();
+    this.sidebarGfx = this.add.graphics().setDepth(5);
+
+    // Sidebar text elements
+    this.sidebarTitle = this.add.text(0, 0, 'MARKET LEADERBOARD', {
+      fontFamily: 'monospace', fontSize: '13px', fontStyle: 'bold', color: '#111118'
+    }).setDepth(10);
+
+    this.sidebarSubtitle = this.add.text(0, 0, 'Top Gainers / Losers (5s)', {
+      fontFamily: 'monospace', fontSize: '10px', color: '#666677'
+    }).setDepth(10);
+
+    this.sidebarRankBadge = this.add.text(0, 0, '', {
+      fontFamily: 'monospace', fontSize: '11px', fontStyle: 'bold', color: '#00ff88',
+      backgroundColor: '#161722', padding: { x: 5, y: 3 }
+    }).setDepth(10);
+
+    this.marketItemTexts = [];
+    for (let i = 0; i < 7; i++) {
+      this.marketItemTexts.push({
+        name: this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '11px', fontStyle: 'bold', color: '#cccccc' }).setDepth(10),
+        desc: this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '9px', color: '#777788' }).setDepth(10),
+        val:  this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '11px', fontStyle: 'bold', align: 'right' }).setOrigin(1, 0).setDepth(10),
+        chg:  this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '10px', align: 'right' }).setOrigin(1, 0).setDepth(10),
+      });
+    }
+
+    // Market leaderboard state
+    this.marketItems = [];
+    this.marketTimer = 0;
+    this.playerLevelBonus = 0;
 
     // Header labels
     this.levelLabel = this.add.text(0, 0, '', {
@@ -443,26 +476,72 @@ class GameScene extends Phaser.Scene {
     const W = this.scale.width;
     const H = this.scale.height;
 
-    // Ortalanmış grafik paneli (ekranın ~%76 genişliği, max 940px)
-    const chartW = Math.min(940, Math.max(480, Math.round(W * 0.76)));
+    // Check if screen has room for right sidebar
+    const showSidebar = W >= 820;
+    const sidebarW = showSidebar ? 230 : 0;
+    const sidebarGap = showSidebar ? 18 : 0;
+    const availW = W - (showSidebar ? (sidebarW + sidebarGap + 20) : 40);
+
+    // Chart dimensions
+    const chartW = Math.min(840, Math.max(380, availW));
     const chartH = Math.min(420, Math.max(240, Math.round(H * 0.48)));
-    const chartX = Math.round((W - chartW) / 2);
+    
+    // Position chart and sidebar
+    let chartX = Math.round((W - chartW) / 2);
+    if (showSidebar) {
+      const totalCombinedW = chartW + sidebarGap + sidebarW;
+      chartX = Math.max(16, Math.round((W - totalCombinedW) / 2));
+    }
     const chartY = 88;
 
     this.chart = { x: chartX, y: chartY, w: chartW, h: chartH };
 
-    // NPC kartları alanı (grafiğin hemen altında)
+    // Sidebar position
+    const sbX = chartX + chartW + sidebarGap;
+    const sbY = chartY;
+    const sbH = chartH + 16 + Math.min(105, Math.max(75, H - (chartY + chartH + 16) - 16));
+    this.sidebar = { x: sbX, y: sbY, w: sidebarW, h: sbH, visible: showSidebar };
+
+    // NPC cards area (under chart)
     const npcY = chartY + chartH + 16;
     const npcH = Math.min(105, Math.max(75, H - npcY - 16));
     this.npcArea = { y: npcY, h: npcH };
 
-    // Üst başlıkları hizala
+    // Align headers
     this.levelLabel.setPosition(chartX, 18);
     this.progressLabel.setPosition(chartX, 42);
     this.hintLabel.setPosition(chartX, 64);
     this.currencyLabel.setPosition(chartX + chartW, 20);
 
-    // Overlay merkezini güncelle
+    // Sidebar text elements alignment
+    if (showSidebar) {
+      this.sidebarTitle.setPosition(sbX + 12, sbY + 12).setVisible(true);
+      this.sidebarSubtitle.setPosition(sbX + 12, sbY + 30).setVisible(true);
+      this.sidebarRankBadge.setPosition(sbX + sidebarW - 12 - 70, sbY + 12).setVisible(true);
+
+      const itemStartY = sbY + 54;
+      const itemRowH   = Math.floor((sbH - 64) / 7);
+
+      this.marketItemTexts.forEach((item, idx) => {
+        const rowY = itemStartY + idx * itemRowH;
+        item.name.setPosition(sbX + 12, rowY).setVisible(true);
+        item.desc.setPosition(sbX + 12, rowY + 14).setVisible(true);
+        item.val.setPosition(sbX + sidebarW - 12, rowY).setVisible(true);
+        item.chg.setPosition(sbX + sidebarW - 12, rowY + 14).setVisible(true);
+      });
+    } else {
+      this.sidebarTitle.setVisible(false);
+      this.sidebarSubtitle.setVisible(false);
+      this.sidebarRankBadge.setVisible(false);
+      this.marketItemTexts.forEach(item => {
+        item.name.setVisible(false);
+        item.desc.setVisible(false);
+        item.val.setVisible(false);
+        item.chg.setVisible(false);
+      });
+    }
+
+    // Overlay center
     this.overlayBg.setPosition(W / 2, H / 2).setSize(W, H);
     this.overlayLabel.setPosition(W / 2, H / 2 - 45);
     this.subLabel.setPosition(W / 2, H / 2);
@@ -473,6 +552,9 @@ class GameScene extends Phaser.Scene {
   initLevel() {
     this.recomputeLayout();
 
+    // Reset level bonus at start of every level (player starts near bottom of leaderboard)
+    this.playerLevelBonus = 0;
+
     // Deterministik Seed: Seviye numarasına göre tekrarlanabilir
     const levelRng = createRNG(this.baseSeed + this.levelIndex * 7919);
     const config   = getLevelConfig(this.levelIndex, this.stockNames, levelRng);
@@ -480,12 +562,108 @@ class GameScene extends Phaser.Scene {
     this.levelState = createLevelState(config, levelRng);
     this.priceState = createPriceState();
 
+    this.initMarketItems();
     this.refreshLevelUI();
+  }
+
+  initMarketItems() {
+    // Difficulty curve: In higher levels, competitors have stronger positive runs
+    // Level 0 (L1): Peers have modest +0.5% to +1.6% gains (easy to reach #1)
+    // Level 1 (L2): Peers have stronger +1.2% to +2.8% gains
+    // Level 2 (L3): Peers have strong +2.0% to +4.2% gains
+    // Level 3+ (L4+): Peers have aggressive +3.0% to +6.0% gains (hard to reach #1)
+    const lvl = this.levelIndex;
+    const topBias = Math.min(4.5, lvl * 1.1);
+
+    const defaultPeers = [
+      { name: 'ETH',         desc: 'Ethereum',     base: 2516.70, chg: +(0.4 + topBias * 0.75).toFixed(2) },
+      { name: 'US 500',      desc: 'S&P Index',    base: 5799.90, chg: +(0.1 + topBias * 0.45).toFixed(2) },
+      { name: 'BIST 100',    desc: 'National 100', base: 10150.60,chg: -0.65 },
+      { name: 'DAX',         desc: 'German Index', base: 19267.60,chg: +(0.8 + topBias * 0.85).toFixed(2) },
+      { name: 'BNB',         desc: 'BNB Vault',    base: 584.50,  chg: -0.80 },
+      { name: 'SOL',         desc: 'Solana',       base: 152.40,  chg: +(1.5 + topBias * 1.05).toFixed(2) },
+    ];
+
+    const currentName = (this.levelState && this.levelState.config && this.levelState.config.label)
+      ? this.levelState.config.label.replace(/^LEVEL \d+ — /, '')
+      : 'Active Asset';
+
+    this.marketItems = defaultPeers.map(p => ({
+      name: p.name,
+      desc: p.desc,
+      price: p.base,
+      chg: p.chg,
+      isPlayer: false,
+    }));
+
+    this.marketItems.push({
+      name: currentName.length > 14 ? currentName.substring(0, 12) + '..' : currentName,
+      desc: 'YOU (Market)',
+      price: +(100 + this.priceState.current * 100).toFixed(2),
+      chg: 0,
+      isPlayer: true,
+    });
+
+    this.updateMarketLeaderboard();
+  }
+
+  updateMarketLeaderboard() {
+    // Player change % calculated from current line price + bonus accumulated by liquidations
+    // Starts low (e.g. -2.0% to 0%), grows up as player raises price and liquidates NPCs
+    const priceEffect = (this.priceState.current - 0.5) * 5.0; // -2.5% to +2.5%
+    const playerChg = +(priceEffect + this.playerLevelBonus).toFixed(2);
+
+    for (const item of this.marketItems) {
+      if (item.isPlayer) {
+        item.chg = playerChg;
+        item.price = +(100 + this.priceState.current * 100 + this.currency * 0.01).toFixed(2);
+      } else {
+        // Minor natural market drift: ±0.35%
+        const drift = (Math.random() - 0.49) * 0.35;
+        item.chg = +(item.chg + drift).toFixed(2);
+        item.price = +(item.price * (1 + drift * 0.01)).toFixed(2);
+      }
+    }
+
+    // Sort descending by percentage change (leaderboard)
+    this.marketItems.sort((a, b) => b.chg - a.chg);
+
+    // Update player rank badge
+    const playerRank = this.marketItems.findIndex(i => i.isPlayer) + 1;
+    this.sidebarRankBadge.setText(`RANK #${playerRank}/${this.marketItems.length}`);
+    if (playerRank <= 2) {
+      this.sidebarRankBadge.setColor('#00ff88');
+    } else if (playerRank <= 4) {
+      this.sidebarRankBadge.setColor('#ffaa00');
+    } else {
+      this.sidebarRankBadge.setColor('#ff4466');
+    }
+
+    // Render items to texts
+    this.marketItems.forEach((item, idx) => {
+      if (idx >= this.marketItemTexts.length) return;
+      const t = this.marketItemTexts[idx];
+      const sign = item.chg >= 0 ? '+' : '';
+      const color = item.chg >= 0 ? '#00ff88' : '#ff4466';
+
+      t.name.setText(`${idx + 1}. ${item.name}`);
+      t.desc.setText(item.desc);
+      t.val.setText(item.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+      t.chg.setText(`${sign}${item.chg.toFixed(2)}%`).setColor(color);
+
+      if (item.isPlayer) {
+        t.name.setColor('#00ff88');
+        t.desc.setColor('#00cc66');
+      } else {
+        t.name.setColor('#cccccc');
+        t.desc.setColor('#777788');
+      }
+    });
   }
 
   // ── Update döngüsü ────────────────────────────────────────────────────────
 
-  update() {
+  update(time, delta) {
     // P key toggles pause (only while actively playing, not during level overlays)
     if (Phaser.Input.Keyboard.JustDown(this.pauseKey)) {
       if (this.gameState === GAME_STATE.PLAYING) {
@@ -501,10 +679,31 @@ class GameScene extends Phaser.Scene {
     const { y: chartY, h: chartH } = this.chart;
     updatePrice(this.priceState, this.mouseY, chartY, chartH);
 
+    // 5-second periodic market leaderboard shuffle & update
+    this.marketTimer += delta || 16.6;
+    if (this.marketTimer >= 5000) {
+      this.marketTimer = 0;
+      this.updateMarketLeaderboard();
+    }
+
     if (this.priceState.sampleTick === 0) {
-      tickLevel(this.levelState, this.priceState, (amount) => {
-        this.currency += amount;
-      });
+      tickLevel(
+        this.levelState,
+        this.priceState,
+        (amount) => {
+          this.currency += amount;
+        },
+        (liquidatedNpc) => {
+          // Liquidating NPC adds permanent boost to leaderboard change for this level
+          // Level 1 (idx 0): +1.0% per NPC (quick rise to #1)
+          // Level 2 (idx 1): +0.75% per NPC
+          // Level 3 (idx 2): +0.55% per NPC
+          // Level 4+ (idx 3+): +0.40% per NPC (must liquidate almost all NPCs & pump to reach #1)
+          const bonusPerLoss = Math.max(0.35, 1.0 - this.levelIndex * 0.20);
+          this.playerLevelBonus += bonusPerLoss;
+          this.updateMarketLeaderboard();
+        }
+      );
 
       if (this.levelState.complete) {
         this.showPauseScreen('next_level');
@@ -517,8 +716,8 @@ class GameScene extends Phaser.Scene {
     }
 
     this.drawGraph();
+    this.drawSidebar();
     this.updateUI();
-  
   }
 
   // ── Çizim: Koyu Gri Panel + Fiyat Çizgisi + Alt NPC Kartları ───────────────
@@ -646,6 +845,47 @@ class GameScene extends Phaser.Scene {
 
     for (let i = count; i < MAX_NPC_SLOTS; i++) {
       this.npcTexts[i].setVisible(false);
+    }
+  }
+
+  // ── Market Sidebar Drawing (Borsa listesi kartı) ─────────────────────────
+
+  drawSidebar() {
+    this.sidebarGfx.clear();
+    if (!this.sidebar || !this.sidebar.visible) return;
+
+    const { x, y, w, h } = this.sidebar;
+
+    // Main dark sidebar container
+    this.sidebarGfx.fillStyle(0x161722, 1);
+    this.sidebarGfx.fillRoundedRect(x, y, w, h, CHART_RADIUS);
+    this.sidebarGfx.lineStyle(1, 0x2a2c3d, 1);
+    this.sidebarGfx.strokeRoundedRect(x, y, w, h, CHART_RADIUS);
+
+    // Header divider line
+    this.sidebarGfx.lineStyle(1, 0x232433, 1);
+    this.sidebarGfx.lineBetween(x + 10, y + 48, x + w - 10, y + 48);
+
+    // Rows and dividers
+    const itemStartY = y + 54;
+    const itemRowH   = Math.floor((h - 64) / 7);
+
+    for (let i = 0; i < 7; i++) {
+      const rowY = itemStartY + i * itemRowH;
+      const item = this.marketItems && this.marketItems[i];
+
+      // Highlight the player's stock row
+      if (item && item.isPlayer) {
+        this.sidebarGfx.fillStyle(0x00ff88, 0.12);
+        this.sidebarGfx.fillRoundedRect(x + 6, rowY - 2, w - 12, itemRowH - 4, 6);
+        this.sidebarGfx.lineStyle(1, 0x00ff88, 0.4);
+        this.sidebarGfx.strokeRoundedRect(x + 6, rowY - 2, w - 12, itemRowH - 4, 6);
+      }
+
+      if (i < 6) {
+        this.sidebarGfx.lineStyle(1, 0x1f202e, 1);
+        this.sidebarGfx.lineBetween(x + 10, rowY + itemRowH - 2, x + w - 10, rowY + itemRowH - 2);
+      }
     }
   }
 
