@@ -343,7 +343,6 @@ class GameScene extends Phaser.Scene {
     // Graphics layers
     this.bgGfx     = this.add.graphics();
     this.fgGfx     = this.add.graphics();
-    this.cursorGfx = this.add.graphics().setDepth(30); // cursor arrow on top of everything
 
     // Header labels
     this.levelLabel = this.add.text(0, 0, '', {
@@ -519,7 +518,7 @@ class GameScene extends Phaser.Scene {
 
     this.drawGraph();
     this.updateUI();
-    this.drawCursor();
+  
   }
 
   // ── Çizim: Koyu Gri Panel + Fiyat Çizgisi + Alt NPC Kartları ───────────────
@@ -648,33 +647,6 @@ class GameScene extends Phaser.Scene {
     for (let i = count; i < MAX_NPC_SLOTS; i++) {
       this.npcTexts[i].setVisible(false);
     }
-  }
-
-  // ── Cursor arrow: green triangle following mouse inside chart ──────────────
-
-  drawCursor() {
-    this.cursorGfx.clear();
-    const { x: cx, y: cy, w: cw, h: ch } = this.chart;
-
-    // Only draw inside chart bounds (with small padding)
-    if (
-      this.mouseX < cx || this.mouseX > cx + cw ||
-      this.mouseY < cy || this.mouseY > cy + ch
-    ) return;
-
-    const mx = this.mouseX;
-    const my = priceToY(this.priceState.current, cy, ch); // snap Y to actual price line
-
-    // Arrow: small triangle pointing right
-    const S = 9; // half-size
-    this.cursorGfx.fillStyle(0x00ff88, 1);
-    this.cursorGfx.fillTriangle(
-      mx + S * 1.8, my,          // tip (right)
-      mx - S,       my - S,      // top-left
-      mx - S,       my + S       // bottom-left
-    );
-    // Dot on tip
-    this.cursorGfx.fillCircle(mx + S * 1.8, my, 3);
   }
 
   // ── Level-complete / fail overlay ──────────────────────────────────────────
@@ -834,4 +806,4 @@ new Phaser.Game({
   scene: [MenuScene, GameScene],
 });
 
-
+
