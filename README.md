@@ -1,5 +1,4 @@
-# Liquidation (Likidasyon)
-
+# Liquidation
 > You are the stock chart. Your job is to ruin everyone who trusts you.
 
 An absurd, web-based strategy game made by Faruk and Berkegiray in 1 month for BST Academy. Theme: **absurdity**.
@@ -66,6 +65,7 @@ Then open `http://localhost:8000` in your browser.
 ## Author
 
 [@farukaskaya](https://github.com/farukaskaya)
+[@GirayInanir](https://github.com/GirayInanir)
 
 ## License
 
