@@ -1,78 +1,79 @@
-# Likidasyon
+# Liquidation (Likidasyon)
 
-> Borsa grafiği sensin. Amacın sana güvenen herkesi batırmak.
+> You are the stock chart. Your job is to ruin everyone who trusts you.
 
-[Jam adı] için 1 ayda yapılmış, web tabanlı bir absürt strateji oyunu. Tema: **absürtlük**.
+An absurd, web-based strategy game made solo in 1 month for [Jam name]. Theme: **absurdity**.
 
-![Oynanış](screenshots/gameplay.gif)
-<!-- screenshots/ klasörü aç, GIF'i veya ana ekran görüntüsünü gameplay.gif / gameplay.png olarak koy -->
+![Gameplay](screenshots/gameplay.gif)
+<!-- Create a screenshots/ folder and put your GIF or main screenshot there as gameplay.gif / gameplay.png -->
 
-**[▶ Oyna: itch.io'da]([itch.io linki])**
+**[▶ Play on itch.io]([itch.io link])**
 
 ---
 
-## Oyun hakkında
+## About
 
-Her finans oyununda yatırımcı olursun ve kazanmaya çalışırsın. Burada tam tersi: sen yatırımcıların baktığı fiyat çizgisinin kendisisin ve onları zarara uğratmaya çalışıyorsun.
+In every finance game you're the investor trying to win. Here it's the opposite: you're the price line the investors are staring at, and you're trying to make them lose money.
 
-Ama bir sorun var. İnsanlar ilgilerini kaybederse hiçbir şey yapamazsın. Fiyatı oynatmazsan ilgi düşer, ilgi biterse level baştan başlar. Yani onları batırmak için önce onların sana bakmaya devam etmesi lazım.
+There's a catch. If people lose interest, you can't do anything. If the price sits still, their interest drops, and if it hits zero the level restarts. To ruin them, you first have to keep them watching.
 
-## Nasıl oynanır
+## How to play
 
-- Fiyat çizgisini **[kontrol: fare / ok tuşları / ...]** ile yukarı ve aşağı oynatırsın.
-- Yatırımcıların **ilgi** değeri var. Fiyat durağan kalırsa ilgi azalır.
-- Pahalıdan alıp ucuzdan satan yatırımcı zarar eder.
-- Her level'da belirli sayıda yatırımcıyı zarara uğratırsan level biter.
-- İlgi biterse o level baştan başlar.
-- Level ilerledikçe yatırımcılar akıllanır, yani başardıkça işin zorlaşır.
-- Her level yeni bir varlık tipi getirir.
+- Move the price line up and down with **[controls: mouse / arrow keys / ...]**.
+- Traders have an **interest** value. If the price stays flat, it drains.
+- A trader who buys high and sells low takes a loss. Every loss pays you in cash (like `+$10,000`), and your total earnings add up across screens.
+- Ruin the target number of traders to clear the level.
+- If their interest runs out, the level restarts.
+- The more you win, the smarter they get, so success makes the job harder.
 
-<!--
-## Leveller
+## The traders
 
-| Level | Varlık | Yeni olan |
-|-------|--------|-----------|
-| 1 | [varlık adı] | [ne öğretiyor] |
-| 2 | [varlık adı] | [ne değişiyor] |
--->
+Four types: `retail`, `hodler`, `contrarian` and `scalper`. Each one reacts differently. Even within a single type, every trader gets its own random ±15% deviation, so they react at different moments instead of moving as a herd.
 
-## Neden absürt?
+## Features
 
-Oyunda yatırımcıları batırmaya çalışan bir borsa grafiğisin ama onları batırabilmek için bile ilgilerini canlı tutmak zorundasın. Kurbanın sana bakmayı bıraktığı an kaybediyorsun. Başardıkça kurbanların akıllanıyor, yani işin kolaylaşmıyor, zorlaşıyor. Hiçbir değeri olmayan bir şeyin fiyatı sadece insanlar ona bakıyor diye var, oyun da bunu olabildiğince ciddiye alıyor.
+- 4 hand-made tutorial levels
+- Endless mode after that: every level is randomly generated with 3-7 traders, random types and absurd stock names
+- Cash balance that grows as you play
+- Mini trading-terminal look: dark gray chart on a white page, ASCII interest bars and orange buy-tracking lines
 
-## Ekran görüntüleri
+## Why is it absurd?
+
+You're a stock chart trying to ruin the traders who watch you, but to do it you have to keep them interested. The moment your victims stop looking at you, you lose. The better you do, the smarter they get, so your job gets harder, not easier. And the price of something with no real value exists only because people keep looking at it. The game takes that very seriously.
+
+## Screenshots
 
 | | |
 |---|---|
-| ![Ana menü](screenshots/menu.png) | ![Level 1](screenshots/level1.png) |
-| ![Level [x]](screenshots/level2.png) | ![Level [y]](screenshots/level3.png) |
+| ![Main menu](screenshots/menu.png) | ![Level 1](screenshots/level1.png) |
+| ![Level [x]](screenshots/level2.png) | ![Endless mode](screenshots/endless.png) |
 
-## Çalıştırma
+## Running locally
 
-Dosyaları indir, klasörde terminal aç ve yerel bir sunucu başlat (tarayıcı `index.html`'i doğrudan açınca bazı dosyaları yüklemeyebilir):
+Download the files, open a terminal in the folder and start a local server (browsers may refuse to load some files when `index.html` is opened directly):
 
 ```
 python -m http.server 8000
 ```
 
-Sonra tarayıcıda `http://localhost:8000` adresine git.
+Then open `http://localhost:8000` in your browser.
 
 <!--
-npm kullanıyorsan yukarıdaki yerine bunu yaz:
+If you use npm instead, replace the above with:
 
 npm install
 npm run dev
 -->
 
-## Teknolojiler
+## Built with
 
-- [Phaser](https://phaser.io/) [sürüm]
+- [Phaser](https://phaser.io/) [version]
 - JavaScript, HTML, CSS
 
-## Yapımcı
+## Author
 
 [@farukaskaya](https://github.com/farukaskaya)
 
-## Lisans
+## License
 
-[Lisans seç, örn. MIT. Seçmezsen "tüm hakları saklıdır" sayılır]
+[Pick a license, e.g. MIT. If you don't pick one, all rights are reserved by default]
