@@ -1,106 +1,117 @@
 import Phaser from 'phaser';
 
-// ─── GLOBAL SABİTLER ───────────────────────────────────────────────────────
+// ─── SEEDED RNG (Mulberry32) ──────────────────────────────────────────────────
 
-const GRAPH_MARGIN    = 50;
-const LERP_SPEED      = 0.5;  // İmleç hareket hızı
-const SAMPLE_INTERVAL = 20;   // Her 20 framede 1 fiyat kaydı
-const HISTORY_LEN     = 180;  // Grafik için fiyat kaydı
+/**
+ * Deterministik PRNG (Mulberry32).
+ * Verilen sayısal seed ile 0-1 arası tekrarlanabilir sözde rastgele sayılar üretir.
+ */
+function createRNG(seed) {
+  let s = (seed >>> 0) || 1337;
+  return function() {
+    s = (s + 0x6D2B79F5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
-// ─── LEVELLAR ─────────────────────────────────────────────────────────────
+// ─── GLOBAL SABİTLER ──────────────────────────────────────────────────────────
+
+const LERP_SPEED      = 0.22;
+const SAMPLE_INTERVAL = 20;
+const HISTORY_LEN     = 180;
+const CHART_PAD       = 22;
+const CHART_RADIUS    = 14;
+const MAX_NPC_SLOTS   = 8;
+
+// ─── LEVEL TANIMLARI (İlk 4 Öğretici Bölüm) ───────────────────────────────────
 
 const LEVEL_CONFIGS = [
   {
     id         : 1,
-    label      : 'LEVEL 1 — Perakende Piyasası',
-    targetLoss : 3,
+    label      : 'LEVEL 1 — Armut CO. Stoğu',
+    targetLoss : 4,
     npcCount   : 5,
     archetypes : ['retail', 'retail', 'retail', 'retail', 'retail'],
-    hint       : 'Yükselt satın alım olunca anında düşür',
+    hint       : 'Yükselt, perakendeciler alsın; sonra anında çökert!',
   },
   {
     id         : 2,
-    label      : 'LEVEL 2 — Biraz Daha Akıllı',
+    label      : 'LEVEL 2 — Wuehai Stoğu',
     targetLoss : 5,
     npcCount   : 6,
     archetypes : ['retail', 'retail', 'hodler', 'hodler', 'retail', 'retail'],
-    hint       : 'HODL\'cular çok bekler — sabırla yükselt, sonra çok sert düşür',
+    hint       : "HODL'cular çok bekler — sabırla yükselt, sonra çok sert düşür",
   },
   {
     id         : 3,
-    label      : 'LEVEL 3 — Uyanık Piyasa',
-    targetLoss : 6,
+    label      : 'LEVEL 3 — Planet Y Stoğu',
+    targetLoss : 5,
     npcCount   : 7,
     archetypes : ['retail', 'hodler', 'contrarian', 'contrarian', 'retail', 'hodler', 'retail'],
-    hint       : 'Kontraryenler düşüşte alır — onları önce kandır, sonra çöktür',
+    hint       : 'Kontraryenler düşüşte alır — onları önce düşüşle kandır, sonra batır',
+  },
+  {
+    id         : 4,
+    label      : 'LEVEL 4 — Yıldırım Fonu Ltd.',
+    targetLoss : 5,
+    npcCount   : 7,
+    archetypes : ['scalper', 'hodler', 'contrarian', 'contrarian', 'scalper', 'hodler', 'scalper'],
+    hint       : 'Scalperlar anında kaçar — fırsat vermeden hızlıca aşağı vur',
   },
 ];
 
-// ─── ARKETİPLER ────────────────────────────────────────────────────────────
-//
-//  retail     : Klasik perakende yatırımcı.
-//               Fiyat yükselince panikle alır, düşünce panikle satar.
-//
-//  hodler     : Uzun vadeli yatırımcı.
-//               Çok daha uzun yükseliş ister ve dip teyidine bakar.
-//               Kazancını erken kesmez, uzun süre bekler.
-//
-//  contrarian : Tersine oynayan zeki para.
-//               Düşüş trendinde alır ("dibini gördüm" mentalitesi).
-//               Ama çok sabırsız — küçük bir toparlanma görmeden de panikler.
-//
-//  scalper    : Hızlı alım-satım yapan, küçük kâr hedefler.
-//               Çok kısa yükseliş streaki yeter ama GAIN_TRIGGER çok küçük;
-//               erken çıkar. LOSS_TRIGGER da küçük: hızlı keser.
-//               Zarara uğratmak için onu "içeride tut" ve sonra sert çökt.
+// ─── ARKETİPLER ───────────────────────────────────────────────────────────────
 
 const ARCHETYPES = {
   retail: {
-    BUY_STREAK   : 25,    // grafik yükseliş streaki (örnek sayısı)
-    LOSS_TRIGGER : 0.08,  // alış fiyatından %8 düşünce panik satış
-    GAIN_TRIGGER : 0.12,  // alış fiyatından %12 yükselince satar
-    INTEREST_DEC : 0.25,  // fiyat durgunken ilgi düşüşü/frame
-    BUY_ON_RISE  : true,  // yükselişte mi, düşüşte mi alır
+    BUY_STREAK   : 25,
+    LOSS_TRIGGER : 0.08,
+    GAIN_TRIGGER : 0.12,
+    INTEREST_DEC : 0.25,
+    BUY_ON_RISE  : true,
   },
   hodler: {
-    BUY_STREAK   : 60,    // 2,4x daha uzun yükseliş ister
-    LOSS_TRIGGER : 0.20,  // %20 düşene kadar dayanır (diamond hands)
-    GAIN_TRIGGER : 0.30,  // %30 yükseliş ister — çıkmaz çabuk
-    INTEREST_DEC : 0.10,  // ilgisi çok yavaş düşer (sabırlı)
+    BUY_STREAK   : 60,
+    LOSS_TRIGGER : 0.20,
+    GAIN_TRIGGER : 0.30,
+    INTEREST_DEC : 0.10,
     BUY_ON_RISE  : true,
   },
   contrarian: {
-    BUY_STREAK   : 20,    // 20 frame düşüş streaki sonra alır (düşüşte alır)
-    LOSS_TRIGGER : 0.06,  // %6 daha düşerse panikler (beklediği dip değil)
-    GAIN_TRIGGER : 0.10,  // %10 yükselince çıkar
-    INTEREST_DEC : 0.30,  // ilgisi hızlı düşer
-    BUY_ON_RISE  : false, // düşüşte alır
+    BUY_STREAK   : 20,
+    LOSS_TRIGGER : 0.06,
+    GAIN_TRIGGER : 0.10,
+    INTEREST_DEC : 0.30,
+    BUY_ON_RISE  : false,
   },
   scalper: {
-    BUY_STREAK   : 8,     // 8 frame yükseliş yeter
-    LOSS_TRIGGER : 0.03,  // %3 düşünce hızlı keser
-    GAIN_TRIGGER : 0.04,  // %4 yükselince hemen çıkar — zarara uğratmak ZOR
-    INTEREST_DEC : 0.40,  // çok sabırsız
+    BUY_STREAK   : 8,
+    LOSS_TRIGGER : 0.03,
+    GAIN_TRIGGER : 0.04,
+    INTEREST_DEC : 0.40,
     BUY_ON_RISE  : true,
   },
 };
 
-// ─── FİYAT ────────────────────────────────────────────────────────────────
+const ARCHETYPE_KEYS = Object.keys(ARCHETYPES);
+
+// ─── SAF FONKSİYONLAR: FİYAT ─────────────────────────────────────────────────
 
 function createPriceState() {
   return {
-    current     : 0.5,
-    target      : 0.5,
-    // Başlangıçta grafik BOŞ — null ile dolduruyoruz, sadece gerçek veriler çizilecek
-    history     : Array(HISTORY_LEN).fill(null),
-    sampleTick  : 0,
-    // Kaç gerçek örnek aldık
-    sampleCount : 0,
+    current    : 0.5,
+    target     : 0.5,
+    history    : Array(HISTORY_LEN).fill(null),
+    sampleTick : 0,
+    sampleCount: 0,
   };
 }
 
-function updatePrice(state, mouseY, screenH) {
-  state.target  = 1 - (mouseY / screenH);
+function updatePrice(state, mouseY, chartY, chartH) {
+  const relY    = mouseY - chartY;
+  state.target  = 1 - (relY / chartH);
   state.target  = Math.max(0.02, Math.min(0.98, state.target));
   state.current += (state.target - state.current) * LERP_SPEED;
 
@@ -110,106 +121,139 @@ function updatePrice(state, mouseY, screenH) {
     if (state.history.length > HISTORY_LEN) state.history.shift();
     state.sampleCount++;
   }
-
   return state;
 }
 
-// Son 'frames' örnek içindeki fiyat değişiminin hız vektörü
 function getPriceVelocity(history, frames = 8) {
-  // Null olmayan son değerleri filtrele
   const real = history.filter(v => v !== null);
   if (real.length < frames + 1) return 0;
   return real[real.length - 1] - real[real.length - 1 - frames];
 }
 
-// Normalize fiyat (0-1) -> ekran Y koordinatı
-function priceToY(p, screenH) {
-  return GRAPH_MARGIN + (1 - p) * (screenH - GRAPH_MARGIN * 2);
+function priceToY(p, chartY, chartH, pad = CHART_PAD) {
+  return chartY + pad + (1 - p) * (chartH - pad * 2);
 }
 
-// ─── NPC ─────────────────────────────────────────────────────────────────
+// ─── SAF FONKSİYONLAR: NPC ───────────────────────────────────────────────────
 
-function createNPC(id, archetype) {
+function createNPC(id, archetype, rng) {
+  const base = ARCHETYPES[archetype];
+
+  // Bireysel varyans / jitter (±%15 sapma)
+  // Böylece aynı tipteki NPC'ler senkronize bir arı kovanı gibi değil,
+  // kademeli olarak farklı anlarda alıp satar.
+  const streakJitter   = 0.85 + rng() * 0.30;
+  const lossJitter     = 0.88 + rng() * 0.24;
+  const gainJitter     = 0.88 + rng() * 0.24;
+  const interestJitter = 0.85 + rng() * 0.30;
+
   return {
     id,
     archetype,
-    state        : 'watching',
-    buyPrice     : null,
-    sellPrice    : null,
-    interest     : 75 + Math.random() * 25,
-    streak       : 0,  // yükseliş veya düşüş streaki (arketipe göre)
+    state         : 'watching',
+    buyPrice      : null,
+    sellPrice     : null,
+    interest      : 70 + rng() * 30,
+    streak        : 0,
+    buyStreak     : Math.max(3, Math.round(base.BUY_STREAK * streakJitter)),
+    lossTrigger   : +(base.LOSS_TRIGGER * lossJitter).toFixed(3),
+    gainTrigger   : +(base.GAIN_TRIGGER * gainJitter).toFixed(3),
+    interestDec   : +(base.INTEREST_DEC * interestJitter).toFixed(3),
+    buyOnRise     : base.BUY_ON_RISE,
   };
 }
 
 function tickNPC(npc, priceState) {
   if (npc.state === 'sold_loss' || npc.state === 'sold_gain') return null;
 
-  const params   = ARCHETYPES[npc.archetype];
   const price    = priceState.current;
   const velocity = getPriceVelocity(priceState.history);
   const isMoving = Math.abs(velocity) > 0.003;
 
   if (!isMoving) {
-    npc.interest = Math.max(0, npc.interest - params.INTEREST_DEC);
+    npc.interest = Math.max(0, npc.interest - npc.interestDec);
   }
 
   if (npc.state === 'watching') {
-    if (params.BUY_ON_RISE) {
-      // Yükselişte alır (retail, hodler, scalper)
-      if (velocity > 0.003) {
-        npc.streak++;
-      } else {
-        npc.streak = Math.max(0, npc.streak - 2);
-      }
+    if (npc.buyOnRise) {
+      npc.streak = velocity > 0.003 ? npc.streak + 1 : Math.max(0, npc.streak - 2);
     } else {
-      // Düşüşte alır (contrarian)
-      if (velocity < -0.003) {
-        npc.streak++;
-      } else {
-        npc.streak = Math.max(0, npc.streak - 2);
-      }
+      npc.streak = velocity < -0.003 ? npc.streak + 1 : Math.max(0, npc.streak - 2);
     }
-
-    if (npc.streak >= params.BUY_STREAK) {
+    if (npc.streak >= npc.buyStreak) {
       npc.state    = 'bought';
       npc.buyPrice = price;
       npc.streak   = 0;
     }
   } else if (npc.state === 'bought') {
     const delta = price - npc.buyPrice;
-    if (delta <= -params.LOSS_TRIGGER) {
-      npc.state     = 'sold_loss';
+    if (delta <= -npc.lossTrigger) {
+      npc.state = 'sold_loss';
       npc.sellPrice = price;
       return 'loss';
     }
-    if (delta >= params.GAIN_TRIGGER) {
-      npc.state     = 'sold_gain';
+    if (delta >= npc.gainTrigger) {
+      npc.state = 'sold_gain';
       npc.sellPrice = price;
       return 'gain';
     }
   }
-
   return null;
 }
 
-// ─── LEVEL ────────────────────────────────────────────────────────────────
+// ─── SAF FONKSİYONLAR: LEVEL & PROCEDURAL GENERATION ────────────────────────
 
-function createLevelState(config) {
+function generateInfiniteLevel(levelIndex, stockNames, rng) {
+  const stockName = (stockNames && stockNames.length > 0)
+    ? stockNames[Math.floor(rng() * stockNames.length)]
+    : 'Bilinmeyen Varlık A.Ş.';
+
+  // min 3, max 7 NPC
+  const npcCount = 3 + Math.floor(rng() * 5);
+  const archetypes = Array.from({ length: npcCount }, () =>
+    ARCHETYPE_KEYS[Math.floor(rng() * ARCHETYPE_KEYS.length)]
+  );
+
+  // Hedef: NPC'lerin en az ~%70'ini likide et (min 2)
+  const targetLoss = Math.max(2, Math.round(npcCount * 0.7));
+
+  return {
+    id         : levelIndex + 1,
+    label      : `LEVEL ${levelIndex + 1} — ${stockName}`,
+    targetLoss,
+    npcCount,
+    archetypes,
+    hint       : 'Absürt piyasa dinamikleri! Arketipler karışık, oyunu oku.',
+  };
+}
+
+function getLevelConfig(levelIndex, stockNames, rng) {
+  if (levelIndex < LEVEL_CONFIGS.length) {
+    return LEVEL_CONFIGS[levelIndex];
+  }
+  return generateInfiniteLevel(levelIndex, stockNames, rng);
+}
+
+function createLevelState(config, rng) {
   return {
     config,
-    npcs      : config.archetypes.map((arch, i) => createNPC(i, arch)),
+    npcs      : config.archetypes.map((arch, i) => createNPC(i, arch, rng)),
     lossCount : 0,
     complete  : false,
   };
 }
 
-function tickLevel(level, priceState) {
+function tickLevel(level, priceState, onEarn) {
   if (level.complete) return;
   for (const npc of level.npcs) {
     const result = tickNPC(npc, priceState);
     if (result === 'loss') {
       level.lossCount++;
       if (level.lossCount >= level.config.targetLoss) level.complete = true;
+      if (onEarn) {
+        const earned = Math.round((npc.buyPrice - npc.sellPrice) * 10000);
+        onEarn(earned);
+      }
     }
   }
 }
@@ -220,154 +264,197 @@ function isLevelFailed(level) {
   return active.length === 0 || active.every(n => n.interest <= 0);
 }
 
-// ─── UI SABİTLERİ ─────────────────────────────────────────────────────────
+function formatCurrency(n) {
+  return '$' + n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// ─── UI SABİTLERİ ─────────────────────────────────────────────────────────────
 
 const STATE_COLOR = {
-  watching  : '#888888',
+  watching  : '#888899',
   bought    : '#ffaa00',
   sold_loss : '#ff4466',
-  sold_gain : '#4499ff',
+  sold_gain : '#44aaff',
 };
 
 const STATE_LABEL = {
   watching  : '(0 -0 ) İzliyor',
   bought    : '$ ALDI',
-  sold_loss : '(T - T) Zararda sattı',
-  sold_gain : '(0 U 0) Kârda sattı',
+  sold_loss : '(T - T) Zararda',
+  sold_gain : '(0 U 0) Kârda kaçtı',
 };
 
 const ARCHETYPE_LABEL = {
-  retail     : 'Perakendeci',
+  retail     : 'Perakende',
   hodler     : 'HODLer',
-  contrarian : 'Kontraryene',
+  contrarian : 'Kontraryen',
   scalper    : 'Scalper',
 };
 
-// ─── PHASER SAHNESİ ───────────────────────────────────────────────────────
-
-const MAX_NPC_SLOTS = 8;
-
-// Oyun durumları (state machine)
 const GAME_STATE = {
-  PLAYING    : 'playing',    // Normal oyun
-  PAUSED     : 'paused',     // Bölüm bitti/başarısız — oyuncu buton bekliyor
-  GAME_OVER  : 'game_over',  // Tüm bölümler bitti — oyun durdu
+  PLAYING  : 'playing',
+  PAUSED   : 'paused',
 };
+
+// ─── PHASER SAHNESİ ───────────────────────────────────────────────────────────
 
 class GameScene extends Phaser.Scene {
   constructor() { super({ key: 'GameScene' }); }
 
+  preload() {
+    // public/stocks.txt dosyasını yükler
+    this.load.text('stockNames', 'stocks.txt');
+  }
+
   create() {
-    const W = this.scale.width;
-    const H = this.scale.height;
+    // Metin dosyasından stok listesini al
+    const raw = this.cache.text.get('stockNames') || '';
+    this.stockNames = raw
+      .split('\n')
+      .map(s => s.trim())
+      .filter(Boolean);
 
-    this.priceState  = createPriceState();
-    this.levelIndex  = 0;
-    this.levelState  = createLevelState(LEVEL_CONFIGS[this.levelIndex]);
-    this.gameState   = GAME_STATE.PLAYING;
-    this.pendingNext = null; // 'next_level' | 'restart' | 'game_over'
+    if (this.stockNames.length === 0) {
+      this.stockNames = ['Uzay Muzları A.Ş.', 'Çorap Coin', 'FOMO Holding'];
+    }
 
-    this.mouseY = H / 2;
+    // Oyun çekirdek durumu
+    this.baseSeed   = 4242;
+    this.levelIndex = 0;
+    this.currency   = 0;
+    this.gameState  = GAME_STATE.PLAYING;
+    this.pendingNext = null;
+    this.mouseY     = this.scale.height / 2;
+
     this.input.on('pointermove', p => { this.mouseY = p.y; });
+    this.scale.on('resize', () => { this.recomputeLayout(); });
 
     // Grafik katmanları
     this.bgGfx = this.add.graphics();
     this.fgGfx = this.add.graphics();
 
-    // Sol üste level adı + hedef + ipucu
-    this.levelLabel = this.add.text(12, 12, '', {
-      fontFamily: 'monospace', fontSize: '16px', color: '#ffffff',
+    // Üst Panel: Beyaz arka plan üstünde koyu metinler
+    this.levelLabel = this.add.text(0, 0, '', {
+      fontFamily: 'monospace', fontSize: '17px', fontStyle: 'bold', color: '#111118',
     }).setDepth(10);
 
-    this.progressLabel = this.add.text(12, 34, '', {
-      fontFamily: 'monospace', fontSize: '13px', color: '#aaaaaa',
+    this.progressLabel = this.add.text(0, 0, '', {
+      fontFamily: 'monospace', fontSize: '13px', color: '#444455',
     }).setDepth(10);
 
-    this.hintLabel = this.add.text(12, 54, '', {
-      fontFamily: 'monospace', fontSize: '11px', color: '#445566',
+    this.hintLabel = this.add.text(0, 0, '', {
+      fontFamily: 'monospace', fontSize: '11px', color: '#666677',
     }).setDepth(10);
 
-    // Fiyat etiketi
+    this.currencyLabel = this.add.text(0, 0, '', {
+      fontFamily: 'monospace', fontSize: '20px', fontStyle: 'bold', color: '#0a8844', align: 'right',
+    }).setOrigin(1, 0).setDepth(10);
+
+    // Fiyat etiketi: Grafiğin sağ kenarında, çizgiye bağlı yeşil kutu
     this.priceLabel = this.add.text(0, 0, '', {
-      fontFamily: 'monospace', fontSize: '13px', color: '#00ff88',
-    }).setDepth(10);
+      fontFamily: 'monospace', fontSize: '12px', fontStyle: 'bold', color: '#000000',
+      backgroundColor: '#00ff88', padding: { x: 5, y: 3 },
+    }).setDepth(15);
 
-    // NPC slotları
-    this.npcTexts = Array.from({ length: MAX_NPC_SLOTS }, (_, i) =>
-      this.add.text(W - 205, 80 + i * 68, '', {
-        fontFamily: 'monospace', fontSize: '11px', color: '#cccccc',
-        backgroundColor: '#0d0d1a', padding: { x: 6, y: 5 },
-        wordWrap: { width: 190 },
-      }).setDepth(10).setVisible(false)
+    // NPC Kartları (Grafiğin altında yatay sıralı)
+    this.npcTexts = Array.from({ length: MAX_NPC_SLOTS }, () =>
+      this.add.text(0, 0, '', {
+        fontFamily : 'monospace',
+        fontSize   : '11px',
+        color      : '#cccccc',
+        padding    : { x: 2, y: 2 },
+      }).setDepth(12).setVisible(false)
     );
 
-    // ── Overlay bileşenleri ──────────────────────────────────────────────
-    this.overlayBg = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0)
-      .setDepth(18);
+    // Overlay (Tam ekran karartma & Durum Ekranı)
+    const W = this.scale.width;
+    const H = this.scale.height;
+    this.overlayBg = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0).setDepth(20);
 
-    this.overlayLabel = this.add.text(W / 2, H / 2 - 40, '', {
-      fontFamily: 'monospace', fontSize: '24px', color: '#ffffff',
-      align: 'center',
-    }).setOrigin(0.5).setDepth(20).setVisible(false);
+    this.overlayLabel = this.add.text(W / 2, H / 2 - 45, '', {
+      fontFamily: 'monospace', fontSize: '24px', fontStyle: 'bold', color: '#ffffff', align: 'center',
+    }).setOrigin(0.5).setDepth(22).setVisible(false);
 
-    this.subLabel = this.add.text(W / 2, H / 2 + 5, '', {
-      fontFamily: 'monospace', fontSize: '14px', color: '#aaaaaa',
-      align: 'center',
-    }).setOrigin(0.5).setDepth(20).setVisible(false);
+    this.subLabel = this.add.text(W / 2, H / 2, '', {
+      fontFamily: 'monospace', fontSize: '14px', color: '#aaaaaa', align: 'center',
+    }).setOrigin(0.5).setDepth(22).setVisible(false);
 
-    // Oyuncu aksiyonu butonu (devam et / tekrar oyna)
-    this.actionBtn = this.add.text(W / 2, H / 2 + 60, '', {
-      fontFamily  : 'monospace',
-      fontSize    : '18px',
-      color       : '#000000',
-      backgroundColor: '#00ff88',
-      padding     : { x: 20, y: 10 },
-      align       : 'center',
+    this.overlayEarnings = this.add.text(W / 2, H / 2 + 30, '', {
+      fontFamily: 'monospace', fontSize: '14px', color: '#00ff88', align: 'center',
+    }).setOrigin(0.5).setDepth(22).setVisible(false);
+
+    this.actionBtn = this.add.text(W / 2, H / 2 + 75, '', {
+      fontFamily: 'monospace', fontSize: '17px', fontStyle: 'bold', color: '#000000',
+      backgroundColor: '#00ff88', padding: { x: 22, y: 10 }, align: 'center',
     })
-      .setOrigin(0.5)
-      .setDepth(21)
-      .setVisible(false)
+      .setOrigin(0.5).setDepth(23).setVisible(false)
       .setInteractive({ useHandCursor: true })
-      .on('pointerover',  () => this.actionBtn.setStyle({ color: '#000000', backgroundColor: '#00cc66' }))
-      .on('pointerout',   () => this.actionBtn.setStyle({ color: '#000000', backgroundColor: '#00ff88' }))
-      .on('pointerdown',  () => this.onActionBtn());
+      .on('pointerover', () => this.actionBtn.setStyle({ backgroundColor: '#00cc66' }))
+      .on('pointerout',  () => this.actionBtn.setStyle({ backgroundColor: '#00ff88' }))
+      .on('pointerdown', () => this.onActionBtn());
 
-    // "Tekrar Oyna" butonu — sadece game over ekranında görünür
-    this.restartBtn = this.add.text(W / 2, H / 2 + 115, '[ Tekrar Oyna ]', {
-      fontFamily  : 'monospace',
-      fontSize    : '15px',
-      color       : '#888888',
-      backgroundColor: '#1a1a2e',
-      padding     : { x: 16, y: 8 },
-      align       : 'center',
-    })
-      .setOrigin(0.5)
-      .setDepth(21)
-      .setVisible(false)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerover',  () => this.restartBtn.setStyle({ color: '#ffffff' }))
-      .on('pointerout',   () => this.restartBtn.setStyle({ color: '#888888' }))
-      .on('pointerdown',  () => this.onRestartBtn());
+    this.initLevel();
+  }
+
+  recomputeLayout() {
+    const W = this.scale.width;
+    const H = this.scale.height;
+
+    // Ortalanmış grafik paneli (ekranın ~%76 genişliği, max 940px)
+    const chartW = Math.min(940, Math.max(480, Math.round(W * 0.76)));
+    const chartH = Math.min(420, Math.max(240, Math.round(H * 0.48)));
+    const chartX = Math.round((W - chartW) / 2);
+    const chartY = 88;
+
+    this.chart = { x: chartX, y: chartY, w: chartW, h: chartH };
+
+    // NPC kartları alanı (grafiğin hemen altında)
+    const npcY = chartY + chartH + 16;
+    const npcH = Math.min(105, Math.max(75, H - npcY - 16));
+    this.npcArea = { y: npcY, h: npcH };
+
+    // Üst başlıkları hizala
+    this.levelLabel.setPosition(chartX, 18);
+    this.progressLabel.setPosition(chartX, 42);
+    this.hintLabel.setPosition(chartX, 64);
+    this.currencyLabel.setPosition(chartX + chartW, 20);
+
+    // Overlay merkezini güncelle
+    this.overlayBg.setPosition(W / 2, H / 2).setSize(W, H);
+    this.overlayLabel.setPosition(W / 2, H / 2 - 45);
+    this.subLabel.setPosition(W / 2, H / 2);
+    this.overlayEarnings.setPosition(W / 2, H / 2 + 30);
+    this.actionBtn.setPosition(W / 2, H / 2 + 75);
+  }
+
+  initLevel() {
+    this.recomputeLayout();
+
+    // Deterministik Seed: Seviye numarasına göre tekrarlanabilir
+    const levelRng = createRNG(this.baseSeed + this.levelIndex * 7919);
+    const config   = getLevelConfig(this.levelIndex, this.stockNames, levelRng);
+
+    this.levelState = createLevelState(config, levelRng);
+    this.priceState = createPriceState();
 
     this.refreshLevelUI();
   }
 
-  // ── Update döngüsü ────────────────────────────────────────────────────
+  // ── Update döngüsü ────────────────────────────────────────────────────────
 
   update() {
-    // PAUSED veya GAME_OVER durumunda oyun mantığı çalışmaz
     if (this.gameState !== GAME_STATE.PLAYING) return;
 
-    const { width: W, height: H } = this.scale;
-
-    updatePrice(this.priceState, this.mouseY, H);
+    const { y: chartY, h: chartH } = this.chart;
+    updatePrice(this.priceState, this.mouseY, chartY, chartH);
 
     if (this.priceState.sampleTick === 0) {
-      tickLevel(this.levelState, this.priceState);
+      tickLevel(this.levelState, this.priceState, (amount) => {
+        this.currency += amount;
+      });
 
       if (this.levelState.complete) {
-        const isLast = this.levelIndex >= LEVEL_CONFIGS.length - 1;
-        this.showPauseScreen(isLast ? 'game_over' : 'next_level');
+        this.showPauseScreen('next_level');
         return;
       }
       if (isLevelFailed(this.levelState)) {
@@ -376,180 +463,103 @@ class GameScene extends Phaser.Scene {
       }
     }
 
-    this.drawGraph(W, H);
-    this.updateUI(W, H);
+    this.drawGraph();
+    this.updateUI();
   }
 
-  // ── Duraklatma ekranı ─────────────────────────────────────────────────
+  // ── Çizim: Koyu Gri Panel + Fiyat Çizgisi + Alt NPC Kartları ───────────────
 
-  showPauseScreen(type) {
-    this.gameState   = type === 'game_over' ? GAME_STATE.GAME_OVER : GAME_STATE.PAUSED;
-    this.pendingNext = type;
+  drawGraph() {
+    const { x: cx, y: cy, w: cw, h: ch } = this.chart;
+    const { y: ny, h: nh } = this.npcArea;
 
-    const W = this.scale.width;
-    const H = this.scale.height;
-
-    this.overlayBg.setFillStyle(0x000000, 0.65);
-    this.overlayBg.setPosition(W / 2, H / 2);
-
-    if (type === 'game_over') {
-      this.overlayLabel
-        .setText('🏆 TÜM BÖLÜMLER TAMAMLANDI')
-        .setColor('#ffd700')
-        .setVisible(true);
-      this.subLabel
-        .setText('Piyasayı çökerttiniz. İş dünyası sizi arıyor.')
-        .setVisible(true);
-      this.actionBtn
-        .setText('[ Oyun Bitti ]')
-        .setStyle({ backgroundColor: '#ffd700', color: '#000000' })
-        .setVisible(true);
-      this.restartBtn.setVisible(true); // "Tekrar Oyna" butonu görünür
-    } else if (type === 'next_level') {
-      this.overlayLabel
-        .setText(`✅ ${this.levelState.config.label} TAMAMLANDI`)
-        .setColor('#00ff88')
-        .setVisible(true);
-      this.subLabel
-        .setText('Sonraki bölüme hazır mısın?')
-        .setVisible(true);
-      this.actionBtn
-        .setText('[ Devam Et ]')
-        .setStyle({ backgroundColor: '#00ff88', color: '#000000' })
-        .setVisible(true);
-      this.restartBtn.setVisible(false);
-    } else { // restart
-      this.overlayLabel
-        .setText('⚠ İLGİ BİTTİ')
-        .setColor('#ff4466')
-        .setVisible(true);
-      this.subLabel
-        .setText('Piyasa seni unuttu. Tekrar dene.')
-        .setVisible(true);
-      this.actionBtn
-        .setText('[ Tekrar Dene ]')
-        .setStyle({ backgroundColor: '#ff4466', color: '#ffffff' })
-        .setVisible(true);
-      this.restartBtn.setVisible(false);
-    }
-  }
-
-  hideOverlay() {
-    this.overlayBg.setFillStyle(0x000000, 0);
-    this.overlayLabel.setVisible(false);
-    this.subLabel.setVisible(false);
-    this.actionBtn.setVisible(false);
-    this.restartBtn.setVisible(false);
-  }
-
-  // Oyuncu aksiyonu butonu (Devam / Tekrar Dene)
-  onActionBtn() {
-    if (this.gameState === GAME_STATE.GAME_OVER) {
-      // Oyun gerçekten bitti — butona basılsa da hiçbir şey olmaz
-      // (zaten "Oyun Bitti" yazıyor, tekrar oyna için ayrı buton var)
-      return;
-    }
-
-    const type = this.pendingNext;
-    this.hideOverlay();
-
-    if (type === 'next_level') {
-      this.levelIndex++;
-      this.levelState  = createLevelState(LEVEL_CONFIGS[this.levelIndex]);
-      this.priceState  = createPriceState(); // yeni levelde grafik sıfırlanır
-      this.refreshLevelUI();
-    } else if (type === 'restart') {
-      this.levelState  = createLevelState(LEVEL_CONFIGS[this.levelIndex]);
-      this.priceState  = createPriceState();
-      this.refreshLevelUI();
-    }
-
-    this.pendingNext = null;
-    this.gameState   = GAME_STATE.PLAYING;
-  }
-
-  // Tekrar Oyna — baştan başla (sadece game over ekranında)
-  onRestartBtn() {
-    this.levelIndex  = 0;
-    this.levelState  = createLevelState(LEVEL_CONFIGS[this.levelIndex]);
-    this.priceState  = createPriceState();
-    this.pendingNext = null;
-    this.hideOverlay();
-    this.refreshLevelUI();
-    this.gameState = GAME_STATE.PLAYING;
-  }
-
-  // ── Level UI ──────────────────────────────────────────────────────────
-
-  refreshLevelUI() {
-    const cfg = this.levelState.config;
-    this.levelLabel.setText(cfg.label);
-    this.hintLabel.setText(`💡 ${cfg.hint}`);
-
-    this.npcTexts.forEach((t, i) => {
-      t.setVisible(i < cfg.npcCount).setText('');
-    });
-  }
-
-  // ── Grafik çizimi ────────────────────────────────────────────────────
-
-  drawGraph(W, H) {
-    // Arkaplan grid
     this.bgGfx.clear();
-    this.bgGfx.lineStyle(1, 0x1a1a2e, 1);
-    for (let i = 0; i <= 4; i++) {
-      this.bgGfx.lineBetween(0, (H / 4) * i, W, (H / 4) * i);
-    }
-    const refY = priceToY(this.priceState.current, H);
-    this.bgGfx.lineStyle(1, 0x00ff88, 0.18);
-    this.bgGfx.lineBetween(0, refY, W, refY);
 
-    // Fiyat geçmişi — sadece null olmayan (gerçek) noktalar çizilir
+    // 1. Ana Grafik Paneli: Koyu Gri (#161722)
+    this.bgGfx.fillStyle(0x161722, 1);
+    this.bgGfx.fillRoundedRect(cx, cy, cw, ch, CHART_RADIUS);
+    this.bgGfx.lineStyle(1, 0x2a2c3d, 1);
+    this.bgGfx.strokeRoundedRect(cx, cy, cw, ch, CHART_RADIUS);
+
+    // Izgara çizgileri
+    this.bgGfx.lineStyle(1, 0x232433, 1);
+    for (let i = 1; i < 4; i++) {
+      const gy = cy + CHART_PAD + (i / 4) * (ch - CHART_PAD * 2);
+      this.bgGfx.lineBetween(cx + CHART_PAD, gy, cx + cw - CHART_PAD, gy);
+    }
+
+    // Fiyat referans çizgisi
+    const refY = priceToY(this.priceState.current, cy, ch);
+    this.bgGfx.lineStyle(1, 0x00ff88, 0.2);
+    this.bgGfx.lineBetween(cx + CHART_PAD, refY, cx + cw - CHART_PAD, refY);
+
+    // 2. Alt Panel: NPC Kart Arka Planları (Koyu Gri mini kutucuklar)
+    const count = this.levelState.npcs.length;
+    const gap   = 8;
+    const cardW = Math.floor((cw - (count - 1) * gap) / count);
+
+    for (let i = 0; i < count; i++) {
+      const kx = cx + i * (cardW + gap);
+      this.bgGfx.fillStyle(0x161722, 1);
+      this.bgGfx.fillRoundedRect(kx, ny, cardW, nh, 8);
+      this.bgGfx.lineStyle(1, 0x2a2c3d, 1);
+      this.bgGfx.strokeRoundedRect(kx, ny, cardW, nh, 8);
+    }
+
+    // 3. Fiyat Çizgisi & Alış Noktaları
     this.fgGfx.clear();
     const history = this.priceState.history;
-    const stepX   = W / (HISTORY_LEN - 1);
+    const innerW  = cw - CHART_PAD * 2;
+    const stepX   = innerW / (HISTORY_LEN - 1);
 
-    this.fgGfx.lineStyle(2, 0x00ff88, 1);
+    this.fgGfx.lineStyle(2.5, 0x00ff88, 1);
     this.fgGfx.beginPath();
 
     let pathStarted = false;
     for (let i = 0; i < history.length; i++) {
-      if (history[i] === null) continue; // boş slotları atla
-
-      const x = i * stepX;
-      const y = priceToY(history[i], H);
-
-      if (!pathStarted) {
-        this.fgGfx.moveTo(x, y);
-        pathStarted = true;
-      } else {
-        this.fgGfx.lineTo(x, y);
-      }
+      if (history[i] === null) continue;
+      const px = cx + CHART_PAD + i * stepX;
+      const py = priceToY(history[i], cy, ch);
+      if (!pathStarted) { this.fgGfx.moveTo(px, py); pathStarted = true; }
+      else               { this.fgGfx.lineTo(px, py); }
     }
     this.fgGfx.strokePath();
 
-    // 'bought' durumundaki NPC alış çizgileri
+    // Satın almış NPC'lerin alış seviyeleri (turuncu çizgi)
     for (const npc of this.levelState.npcs) {
       if (npc.state === 'bought') {
-        const by = priceToY(npc.buyPrice, H);
-        this.fgGfx.lineStyle(1, 0xffaa00, 0.45);
-        this.fgGfx.lineBetween(0, by, W, by);
+        const by = priceToY(npc.buyPrice, cy, ch);
+        this.fgGfx.lineStyle(1.5, 0xffaa00, 0.6);
+        this.fgGfx.lineBetween(cx + CHART_PAD, by, cx + cw - CHART_PAD, by);
       }
     }
   }
 
-  // ── Dinamik UI ───────────────────────────────────────────────────────
+  // ── Metinler ve Arayüz Güncellemesi ───────────────────────────────────────
 
-  updateUI(W, H) {
+  updateUI() {
+    const { x: cx, y: cy, w: cw, h: ch } = this.chart;
+    const { y: ny, h: nh } = this.npcArea;
+
+    // Fiyat Rozeti
     const pct    = Math.round(this.priceState.current * 100);
-    const labelY = priceToY(this.priceState.current, H) - 10;
-    this.priceLabel.setPosition(W - 52, Math.max(4, Math.min(H - 20, labelY)));
-    this.priceLabel.setText(`${pct}%`);
+    const labelY = priceToY(this.priceState.current, cy, ch);
+    this.priceLabel
+      .setPosition(cx + cw - 52, Math.max(cy + 4, Math.min(cy + ch - 22, labelY - 9)))
+      .setText(`${pct}%`);
 
+    // İlerleme ve Bakiye
     const { lossCount, config } = this.levelState;
-    this.progressLabel.setText(`Zarara uğrat: ${lossCount} / ${config.targetLoss}`);
+    this.progressLabel.setText(`Zarara Uğrat: ${lossCount} / ${config.targetLoss}`);
+    this.currencyLabel.setText(`Kazanç: ${formatCurrency(this.currency)}`);
+
+    // NPC Kartlarının İçerikleri
+    const count = this.levelState.npcs.length;
+    const gap   = 8;
+    const cardW = Math.floor((cw - (count - 1) * gap) / count);
 
     this.levelState.npcs.forEach((npc, i) => {
+      const kx       = cx + i * (cardW + gap);
       const txt      = this.npcTexts[i];
       const interest = Math.round(npc.interest);
       const filled   = Math.round(interest / 10);
@@ -557,28 +567,95 @@ class GameScene extends Phaser.Scene {
       const archName = ARCHETYPE_LABEL[npc.archetype] || npc.archetype;
 
       const lines = [
-        `NPC #${npc.id + 1} [${archName}]  ${STATE_LABEL[npc.state]}`,
-        `İlgi: [${bar}]`,
+        `#${npc.id + 1} ${archName}`,
+        STATE_LABEL[npc.state],
+        `[${bar}]`,
       ];
+
       if (npc.state === 'bought') {
         lines.push(`Alış: %${Math.round(npc.buyPrice * 100)}`);
       } else if (npc.state === 'sold_loss') {
-        const loss = Math.round((npc.buyPrice - npc.sellPrice) * 100);
-        lines.push(`Zarar: -%${loss} ✓`);
+        const earned = Math.round((npc.buyPrice - npc.sellPrice) * 10000);
+        lines.push(`+${formatCurrency(earned)} ✓`);
+      } else if (npc.state === 'sold_gain') {
+        lines.push('Kaçtı ✗');
       }
 
-      txt.setText(lines.join('\n')).setColor(STATE_COLOR[npc.state]);
+      txt
+        .setPosition(kx + 6, ny + 6)
+        .setText(lines.join('\n'))
+        .setColor(STATE_COLOR[npc.state])
+        .setVisible(true);
     });
+
+    for (let i = count; i < MAX_NPC_SLOTS; i++) {
+      this.npcTexts[i].setVisible(false);
+    }
+  }
+
+  // ── Seviye Geçiş ve Duraklama Ekranı ───────────────────────────────────────
+
+  showPauseScreen(type) {
+    this.gameState   = GAME_STATE.PAUSED;
+    this.pendingNext = type;
+
+    this.overlayBg.setFillStyle(0x000000, 0.72);
+    this.overlayEarnings.setText(`Toplam Kazanç: ${formatCurrency(this.currency)}`).setVisible(true);
+
+    if (type === 'next_level') {
+      this.overlayLabel.setText(`✅ ${this.levelState.config.label} TAMAMLANDI`).setColor('#00ff88').setVisible(true);
+      const sub = this.levelIndex >= 3
+        ? 'Sonsuz piyasada sıradaki vurguna hazır mısın?'
+        : 'Sonraki seviyeye hazır mısın?';
+      this.subLabel.setText(sub).setVisible(true);
+      this.actionBtn.setText('[ Devam Et ]').setStyle({ backgroundColor: '#00ff88', color: '#000000' }).setVisible(true);
+    } else {
+      this.overlayLabel.setText('⚠ İLGİ BİTTİ').setColor('#ff4466').setVisible(true);
+      this.subLabel.setText('Piyasa seni unuttu. Tekrar dene.').setVisible(true);
+      this.actionBtn.setText('[ Tekrar Dene ]').setStyle({ backgroundColor: '#ff4466', color: '#ffffff' }).setVisible(true);
+    }
+  }
+
+  hideOverlay() {
+    this.overlayBg.setFillStyle(0x000000, 0);
+    this.overlayLabel.setVisible(false);
+    this.subLabel.setVisible(false);
+    this.overlayEarnings.setVisible(false);
+    this.actionBtn.setVisible(false);
+  }
+
+  onActionBtn() {
+    const type = this.pendingNext;
+    this.hideOverlay();
+
+    if (type === 'next_level') {
+      this.levelIndex++;
+    }
+    // Her iki durumda da initLevel çalışır (restart'ta aynı bölüm, next'te bir sonraki)
+    this.initLevel();
+
+    this.pendingNext = null;
+    this.gameState   = GAME_STATE.PLAYING;
+  }
+
+  refreshLevelUI() {
+    const cfg = this.levelState.config;
+    this.levelLabel.setText(cfg.label);
+    this.hintLabel.setText(`💡 ${cfg.hint}`);
   }
 }
 
-// ─── PHASER KONFİGÜRASYONU ───────────────────────────────────────────────
+// ─── PHASER KONFİGÜRASYONU ───────────────────────────────────────────────────
 
 new Phaser.Game({
   type           : Phaser.AUTO,
   width          : window.innerWidth,
   height         : window.innerHeight,
-  backgroundColor: '#0a0a0f',
+  backgroundColor: '#ffffff', // Beyaz site arka planı
+  scale          : {
+    mode: Phaser.Scale.RESIZE,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
   fps            : { target: 60, limit: 60 },
   scene          : [GameScene],
 });
