@@ -17,7 +17,7 @@ There's a catch. If people lose interest, you can't do anything. If the price si
 
 ## How to play
 
-- Move the price line up and down with **mouse**.
+- Move the price line up and down with **mouse**, pause it with **p**.
 - Traders have an **interest** value. If the price stays flat, it drains.
 - A trader who buys high and sells low takes a loss. Every loss pays you in cash (like `+$10,000`), and your total earnings add up across screens.
 - Ruin the target number of traders to clear the level.

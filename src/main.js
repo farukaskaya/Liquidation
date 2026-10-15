@@ -4,7 +4,7 @@ import Phaser from 'phaser';
 
 /**
  * Deterministik PRNG (Mulberry32).
- * Verilen sayısal seed ile 0-1 arası tekrarlanabilir sözde rastgele sayılar üretir.
+ * Verilen sayısal seed ile 0-1 arası tekrarlanabilir sözde rastgele sayılar üretir." 1"
  */
 function createRNG(seed) {
   let s = (seed >>> 0) || 1337;
@@ -169,9 +169,10 @@ function tickNPC(npc, priceState) {
   const price    = priceState.current;
   const velocity = getPriceVelocity(priceState.history);
   const isMoving = Math.abs(velocity) > 0.003;
+  const isUnstable = Math.abs(velocity) > 0.1;
 
-  if (!isMoving) {
-    npc.interest = Math.max(0, npc.interest - npc.interestDec);
+  if (!isMoving ^ isUnstable) {
+    npc.interest = Math.max(0, npc.interest - npc.interestDec * (isUnstable ? 1.5 : 1));
   }
 
   // Interest exhausted → NPC flees the market
